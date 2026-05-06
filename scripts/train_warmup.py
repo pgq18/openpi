@@ -85,6 +85,7 @@ def create_warmup_data_loader(
     action_horizon: int,
     model_config: pi0_config.Pi0Config,
     *,
+    use_relative_state: bool = False,
     sharding: jax.sharding.Sharding | None = None,
     shuffle: bool = True,
 ):
@@ -94,6 +95,13 @@ def create_warmup_data_loader(
     norm_stats = _normalize.load(norm_stats_dir)
     logging.info(f"Loaded norm stats from {norm_stats_dir}")
 
+    # When using relative_state, remap norm_stats key so Normalize sees "state"
+    if use_relative_state:
+        if "relative_state" in norm_stats:
+            norm_stats = dict(norm_stats)
+            norm_stats["state"] = norm_stats.pop("relative_state")
+            logging.info("Using relative_state normalization stats (remapped to 'state')")
+
     # Create the RLDS dataset
     dataset = warmup_rlds_dataset.WarmupRldsDataset(
         data_dir=rlds_data_dir,
@@ -101,17 +109,18 @@ def create_warmup_data_loader(
         shuffle=shuffle,
         action_chunk_size=action_horizon,
         datasets=[
-            warmup_rlds_dataset.WarmupRLDSDataset(name="warmup", version="3.0.0", split="train"),
+            warmup_rlds_dataset.WarmupRLDSDataset(name="warmup", version="4.0.0", split="train"),
         ],
     )
 
     # Build transform pipeline
+    state_source = "observation/relative_state" if use_relative_state else "observation/state"
     transform_pipeline = [
         _transforms.RepackTransform(
             {
                 "observation/image": "observation/image",
                 "observation/wrist_image": "observation/wrist_image",
-                "observation/state": "observation/state",
+                "observation/state": state_source,
                 "actions": "actions",
                 "prompt": "prompt",
             }
@@ -292,6 +301,7 @@ def main():
         default=None,
         help="Enable LoRA fine-tuning. 'full'=both paligemma and action expert, 'action_expert_only'=action expert only",
     )
+    parser.add_argument("--use_relative_state", action="store_true", help="Use relative_state instead of state as model input")
     args = parser.parse_args()
 
     if args.resume and args.overwrite:
@@ -402,6 +412,7 @@ def main():
         batch_size=config.batch_size,
         action_horizon=model_config.action_horizon,
         model_config=model_config,
+        use_relative_state=args.use_relative_state,
         sharding=data_sharding,
         shuffle=True,
     )

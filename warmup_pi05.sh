@@ -9,7 +9,8 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 #     --checkpoint_path /home/pengguanqi/Models/pi05_base/params \
 #     --exp_name warmup_test_${TIMESTAMP} \
 #     --batch_size 32 \
-#     --num_train_steps 20000
+#     --num_train_steps 20000 \
+#     --use_relative_state
 
 # LoRA fine-tuning (full -- both paligemma and action expert)
 uv run scripts/train_warmup.py \
@@ -19,7 +20,8 @@ uv run scripts/train_warmup.py \
     --exp_name warmup_lora_test_${TIMESTAMP} \
     --lora full \
     --batch_size 32 \
-    --num_train_steps 20000
+    --num_train_steps 20000 \
+    --use_relative_state
 
 # LoRA fine-tuning (action expert only)
 # uv run scripts/train_warmup.py \
@@ -29,4 +31,5 @@ uv run scripts/train_warmup.py \
 #     --exp_name warmup_lora_ae_${TIMESTAMP} \
 #     --lora action_expert_only \
 #     --batch_size 32 \
-#     --num_train_steps 20000
+#     --num_train_steps 20000 \
+#     --use_relative_state

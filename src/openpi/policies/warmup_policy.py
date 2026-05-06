@@ -62,6 +62,9 @@ class WarmupInputs(transforms.DataTransformFn):
             },
         }
 
+        if "observation/relative_state" in data:
+            inputs["relative_state"] = np.asarray(data["observation/relative_state"], dtype=np.float32)
+
         if "actions" in data:
             inputs["actions"] = data["actions"]
 

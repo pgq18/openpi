@@ -30,7 +30,7 @@ def load_episode(data_dir: str, episode_idx: int, split: str) -> dict:
 
     tf.config.set_visible_devices([], "GPU")
 
-    builder = tfds.builder("warmup", data_dir=data_dir, version="3.0.0")
+    builder = tfds.builder("warmup", data_dir=data_dir, version="4.0.0")
     dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=False)
 
     episode = None
@@ -50,7 +50,7 @@ def load_episode(data_dir: str, episode_idx: int, split: str) -> dict:
     print(f"Instruction: {prompt}")
 
     # Decode JPEG images and convert everything to numpy arrays
-    images, wrist_images, states, actions = [], [], [], []
+    images, wrist_images, states, relative_states, actions = [], [], [], [], []
     for j in range(num_steps):
         img = tf.io.decode_image(
             episode["observation"]["image"][j], expand_animations=False, dtype=tf.uint8
@@ -61,9 +61,11 @@ def load_episode(data_dir: str, episode_idx: int, split: str) -> dict:
         ).numpy()
         wrist_images.append(wrist)
         states.append(np.asarray(episode["observation"]["state"][j], dtype=np.float32))
+        if "relative_state" in episode["observation"]:
+            relative_states.append(np.asarray(episode["observation"]["relative_state"][j], dtype=np.float32))
         actions.append(np.asarray(episode["action"][j], dtype=np.float32))
 
-    return {
+    result = {
         "images": images,
         "wrist_images": wrist_images,
         "states": states,
@@ -71,11 +73,15 @@ def load_episode(data_dir: str, episode_idx: int, split: str) -> dict:
         "prompt": prompt,
         "num_steps": num_steps,
     }
+    if relative_states:
+        result["relative_states"] = relative_states
+    return result
 
 
 @dataclasses.dataclass(frozen=True)
 class WarmupDataConfig(DataConfigFactory):
     repo_id: str = "warmup"
+    use_relative_state: bool = False
 
     def create(self, assets_dirs, model_config):
         import openpi.models.model as _model
@@ -84,6 +90,9 @@ class WarmupDataConfig(DataConfigFactory):
         import openpi.shared.normalize as normalize
 
         norm_stats = normalize.load(download.maybe_download(str(assets_dirs / "warmup")))
+        if self.use_relative_state and "relative_state" in norm_stats:
+            norm_stats = dict(norm_stats)
+            norm_stats["state"] = norm_stats.pop("relative_state")
         return DataConfig(
             repo_id=self.repo_id,
             asset_id="warmup",
@@ -97,7 +106,7 @@ class WarmupDataConfig(DataConfigFactory):
         )
 
 
-def build_train_config(lora_mode: str) -> TrainConfig:
+def build_train_config(lora_mode: str, use_relative_state: bool = False) -> TrainConfig:
     import openpi.models.pi0_config as pi0_config
 
     paligemma_variant = "gemma_2b"
@@ -125,16 +134,18 @@ def build_train_config(lora_mode: str) -> TrainConfig:
     return TrainConfig(
         name="pi05_warmup",
         model=model_config,
-        data=WarmupDataConfig(),
+        data=WarmupDataConfig(use_relative_state=use_relative_state),
         **kwargs,
     )
 
 
-def run_openloop_eval(policy, episode: dict, stride: int, action_horizon: int) -> tuple[np.ndarray, np.ndarray]:
+def run_openloop_eval(policy, episode: dict, stride: int, action_horizon: int, use_relative_state: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """Run open-loop evaluation: predict actions at each stride position."""
     num_steps = episode["num_steps"]
     all_pred_actions = []
     all_gt_actions = []
+
+    state_key = "relative_states" if (use_relative_state and "relative_states" in episode) else "states"
 
     positions = list(range(0, num_steps, stride))
     print(f"Open-loop eval: {len(positions)} inference points, stride={stride}, horizon={action_horizon}")
@@ -143,7 +154,7 @@ def run_openloop_eval(policy, episode: dict, stride: int, action_horizon: int) -
         obs = {
             "observation/image": episode["images"][pos],
             "observation/wrist_image": episode["wrist_images"][pos],
-            "observation/state": episode["states"][pos],
+            "observation/state": episode[state_key][pos],
             "prompt": episode["prompt"],
         }
 
@@ -224,6 +235,7 @@ def main():
     parser.add_argument("--lora", choices=["full", "action_expert_only"], default="full", help="LoRA mode")
     parser.add_argument("--save_dir", type=str, default="./eval_results", help="Output directory for plots")
     parser.add_argument("--stride", type=int, default=10, help="Inference stride (= action_horizon)")
+    parser.add_argument("--use_relative_state", action="store_true", help="Use relative_state instead of state as model input")
     args = parser.parse_args()
 
     # Step 1: Load episode data (TF on CPU, before JAX initializes GPU)
@@ -231,7 +243,7 @@ def main():
     episode = load_episode(args.data_dir, args.episode_idx, args.split)
 
     # Step 2: Build config and load policy (JAX will use GPU)
-    train_config = build_train_config(args.lora)
+    train_config = build_train_config(args.lora, use_relative_state=args.use_relative_state)
     action_horizon = train_config.model.action_horizon
 
     import openpi.policies.policy_config as policy_config
@@ -241,7 +253,7 @@ def main():
     print("Policy loaded.")
 
     # Step 3: Run open-loop evaluation
-    pred_actions, gt_actions = run_openloop_eval(policy, episode, args.stride, action_horizon)
+    pred_actions, gt_actions = run_openloop_eval(policy, episode, args.stride, action_horizon, use_relative_state=args.use_relative_state)
 
     # Step 4: Plot results
     plot_results(pred_actions, gt_actions, args.save_dir, args.episode_idx)

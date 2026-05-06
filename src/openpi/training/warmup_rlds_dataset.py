@@ -59,6 +59,8 @@ class WarmupRldsDataset:
                 }
                 if "wrist_image" in traj["observation"]:
                     obs["wrist_image"] = traj["observation"]["wrist_image"]
+                if "relative_state" in traj["observation"]:
+                    obs["relative_state"] = traj["observation"]["relative_state"]
                 return {
                     "actions": traj["action"],
                     "observation": obs,
