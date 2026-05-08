@@ -41,7 +41,7 @@ def main():
         shuffle=False,
         action_chunk_size=10,
         datasets=[
-            warmup_rlds_dataset.WarmupRLDSDataset(name="warmup", version="4.0.0", split="train"),
+            warmup_rlds_dataset.WarmupRLDSDataset(name="warmup", version="5.0.0", split="train"),
         ],
     )
 
@@ -58,6 +58,8 @@ def main():
                 "observation/state": "observation/state",
                 "observation/relative_state": "observation/relative_state",
                 "actions": "actions",
+                "skeleton_actions": "skeleton_actions",
+                "residual_actions": "residual_actions",
                 "prompt": "prompt",
             }
         ),
@@ -72,7 +74,7 @@ def main():
     )
 
     # 3. Compute running stats
-    keys = ["state", "relative_state", "actions"]
+    keys = ["state", "relative_state", "actions", "skeleton_actions", "residual_actions"]
     stats = {key: normalize.RunningStats() for key in keys}
 
     num_batches = args.max_batches if args.max_batches is not None else (len(dataset) // args.batch_size)

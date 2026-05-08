@@ -61,11 +61,16 @@ class WarmupRldsDataset:
                     obs["wrist_image"] = traj["observation"]["wrist_image"]
                 if "relative_state" in traj["observation"]:
                     obs["relative_state"] = traj["observation"]["relative_state"]
-                return {
+                out = {
                     "actions": traj["action"],
                     "observation": obs,
                     "prompt": traj["language_instruction"],
                 }
+                if "skeleton_action" in traj:
+                    out["skeleton_actions"] = traj["skeleton_action"]
+                if "residual_action" in traj:
+                    out["residual_actions"] = traj["residual_action"]
+                return out
 
             dataset = dataset.traj_map(restructure, num_parallel_calls)
 
@@ -79,11 +84,6 @@ class WarmupRldsDataset:
                 traj_len = tf.shape(traj["actions"])[0]
                 action_dim = tf.shape(traj["actions"])[1]
 
-                actions_padded = tf.concat(
-                    [traj["actions"], tf.zeros((action_chunk_size, action_dim), dtype=tf.float32)],
-                    axis=0,
-                )
-
                 action_chunk_indices = tf.broadcast_to(
                     tf.range(action_chunk_size)[None],
                     [traj_len, action_chunk_size],
@@ -92,7 +92,14 @@ class WarmupRldsDataset:
                     [traj_len, action_chunk_size],
                 )
 
-                traj["actions"] = tf.gather(actions_padded, action_chunk_indices)
+                for key in ("actions", "skeleton_actions", "residual_actions"):
+                    if key in traj:
+                        padded = tf.concat(
+                            [traj[key], tf.zeros((action_chunk_size, action_dim), dtype=tf.float32)],
+                            axis=0,
+                        )
+                        traj[key] = tf.gather(padded, action_chunk_indices)
+
                 return traj
 
             dataset = dataset.traj_map(chunk_actions, num_parallel_calls)

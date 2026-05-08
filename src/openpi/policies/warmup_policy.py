@@ -67,6 +67,10 @@ class WarmupInputs(transforms.DataTransformFn):
 
         if "actions" in data:
             inputs["actions"] = data["actions"]
+        if "skeleton_actions" in data:
+            inputs["skeleton_actions"] = data["skeleton_actions"]
+        if "residual_actions" in data:
+            inputs["residual_actions"] = data["residual_actions"]
 
         if "prompt" in data:
             prompt = data["prompt"]
