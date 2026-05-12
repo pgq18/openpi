@@ -78,6 +78,13 @@ def init_logging():
     logger.handlers[0].setFormatter(formatter)
 
 
+ACTION_TYPE_TO_DATASET_KEY = {
+    "raw_actions": "actions",
+    "skeleton_actions": "skeleton_actions",
+    "residual_actions": "residual_actions",
+}
+
+
 def create_warmup_data_loader(
     rlds_data_dir: str,
     norm_stats_dir: str,
@@ -85,11 +92,15 @@ def create_warmup_data_loader(
     action_horizon: int,
     model_config: pi0_config.Pi0Config,
     *,
+    action_type: str = "raw_actions",
     use_relative_state: bool = False,
     sharding: jax.sharding.Sharding | None = None,
     shuffle: bool = True,
 ):
     """Create a data loader for the warmup TFDS dataset."""
+    action_key = ACTION_TYPE_TO_DATASET_KEY[action_type]
+    logging.info(f"Action type: {action_type} -> dataset key: {action_key}")
+
     # Load norm stats
     norm_stats_dir = str(_download.maybe_download(norm_stats_dir))
     norm_stats = _normalize.load(norm_stats_dir)
@@ -101,6 +112,13 @@ def create_warmup_data_loader(
             norm_stats = dict(norm_stats)
             norm_stats["state"] = norm_stats.pop("relative_state")
             logging.info("Using relative_state normalization stats (remapped to 'state')")
+
+    # Remap action norm stats to "actions" key for downstream transforms
+    if action_key != "actions":
+        if action_key in norm_stats:
+            norm_stats = dict(norm_stats)
+            norm_stats["actions"] = norm_stats.pop(action_key)
+            logging.info(f"Using {action_key} normalization stats (remapped to 'actions')")
 
     # Create the RLDS dataset
     dataset = warmup_rlds_dataset.WarmupRldsDataset(
@@ -121,7 +139,7 @@ def create_warmup_data_loader(
                 "observation/image": "observation/image",
                 "observation/wrist_image": "observation/wrist_image",
                 "observation/state": state_source,
-                "actions": "actions",
+                "actions": action_key,
                 "prompt": "prompt",
             }
         ),
@@ -301,6 +319,12 @@ def main():
         default=None,
         help="Enable LoRA fine-tuning. 'full'=both paligemma and action expert, 'action_expert_only'=action expert only",
     )
+    parser.add_argument(
+        "--action_type",
+        choices=["raw_actions", "skeleton_actions", "residual_actions"],
+        default="raw_actions",
+        help="Which action field to train on: raw_actions (standard delta actions), skeleton_actions (low-freq DCT), residual_actions (high-freq DCT)",
+    )
     parser.add_argument("--use_relative_state", action="store_true", help="Use relative_state instead of state as model input")
     args = parser.parse_args()
 
@@ -412,6 +436,7 @@ def main():
         batch_size=config.batch_size,
         action_horizon=model_config.action_horizon,
         model_config=model_config,
+        action_type=args.action_type,
         use_relative_state=args.use_relative_state,
         sharding=data_sharding,
         shuffle=True,

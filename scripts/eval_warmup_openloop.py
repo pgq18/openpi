@@ -75,6 +75,11 @@ def load_episode(data_dir: str, episode_idx: int, split: str) -> dict:
     }
     if relative_states:
         result["relative_states"] = relative_states
+    # Load skeleton/residual actions if available
+    if "skeleton_action" in episode:
+        result["skeleton_actions"] = [np.asarray(episode["skeleton_action"][j], dtype=np.float32) for j in range(num_steps)]
+    if "residual_action" in episode:
+        result["residual_actions"] = [np.asarray(episode["residual_action"][j], dtype=np.float32) for j in range(num_steps)]
     return result
 
 
@@ -139,16 +144,17 @@ def build_train_config(lora_mode: str, use_relative_state: bool = False) -> Trai
     )
 
 
-def run_openloop_eval(policy, episode: dict, stride: int, action_horizon: int, use_relative_state: bool = False) -> tuple[np.ndarray, np.ndarray]:
+def run_openloop_eval(policy, episode: dict, stride: int, action_horizon: int, use_relative_state: bool = False, action_type: str = "raw_actions") -> tuple[np.ndarray, np.ndarray]:
     """Run open-loop evaluation: predict actions at each stride position."""
     num_steps = episode["num_steps"]
     all_pred_actions = []
     all_gt_actions = []
 
     state_key = "relative_states" if (use_relative_state and "relative_states" in episode) else "states"
+    gt_key = "actions" if action_type == "raw_actions" else action_type
 
     positions = list(range(0, num_steps, stride))
-    print(f"Open-loop eval: {len(positions)} inference points, stride={stride}, horizon={action_horizon}")
+    print(f"Open-loop eval: {len(positions)} inference points, stride={stride}, horizon={action_horizon}, gt_key={gt_key}")
 
     for idx, pos in enumerate(positions):
         obs = {
@@ -164,7 +170,7 @@ def run_openloop_eval(policy, episode: dict, stride: int, action_horizon: int, u
 
         # Collect GT for the corresponding horizon
         end = min(pos + action_horizon, num_steps)
-        gt_chunk = np.array(episode["actions"][pos:end])
+        gt_chunk = np.array(episode[gt_key][pos:end])
 
         # Pad GT with zeros if shorter than horizon (matching training behavior)
         if len(gt_chunk) < action_horizon:
@@ -236,6 +242,12 @@ def main():
     parser.add_argument("--save_dir", type=str, default="./eval_results", help="Output directory for plots")
     parser.add_argument("--stride", type=int, default=10, help="Inference stride (= action_horizon)")
     parser.add_argument("--use_relative_state", action="store_true", help="Use relative_state instead of state as model input")
+    parser.add_argument(
+        "--action_type",
+        choices=["raw_actions", "skeleton_actions", "residual_actions"],
+        default="raw_actions",
+        help="Which action type was trained on (for GT comparison)",
+    )
     args = parser.parse_args()
 
     # Step 1: Load episode data (TF on CPU, before JAX initializes GPU)
@@ -253,7 +265,7 @@ def main():
     print("Policy loaded.")
 
     # Step 3: Run open-loop evaluation
-    pred_actions, gt_actions = run_openloop_eval(policy, episode, args.stride, action_horizon, use_relative_state=args.use_relative_state)
+    pred_actions, gt_actions = run_openloop_eval(policy, episode, args.stride, action_horizon, use_relative_state=args.use_relative_state, action_type=args.action_type)
 
     # Step 4: Plot results
     plot_results(pred_actions, gt_actions, args.save_dir, args.episode_idx)
