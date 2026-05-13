@@ -30,7 +30,7 @@ def load_episode(data_dir: str, episode_idx: int, split: str) -> dict:
 
     tf.config.set_visible_devices([], "GPU")
 
-    builder = tfds.builder("warmup", data_dir=data_dir, version="4.0.0")
+    builder = tfds.builder("warmup", data_dir=data_dir, version="5.0.0")
     dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=False)
 
     episode = None
@@ -259,9 +259,18 @@ def main():
     action_horizon = train_config.model.action_horizon
 
     import openpi.policies.policy_config as policy_config
+    import openpi.training.checkpoints as _checkpoints
 
     print("Loading policy...")
-    policy = policy_config.create_trained_policy(train_config, args.checkpoint_dir)
+    # Load norm_stats from checkpoint and strip unused action keys
+    # to avoid strict-mode errors in Unnormalize
+    norm_stats = _checkpoints.load_norm_stats(
+        pathlib.Path(args.checkpoint_dir) / "assets", "warmup"
+    )
+    unused = {"skeleton_actions", "residual_actions"} - {args.action_type if args.action_type != "raw_actions" else "actions"}
+    if unused:
+        norm_stats = {k: v for k, v in norm_stats.items() if k not in unused}
+    policy = policy_config.create_trained_policy(train_config, args.checkpoint_dir, norm_stats=norm_stats)
     print("Policy loaded.")
 
     # Step 3: Run open-loop evaluation

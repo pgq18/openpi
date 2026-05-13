@@ -114,11 +114,17 @@ def create_warmup_data_loader(
             logging.info("Using relative_state normalization stats (remapped to 'state')")
 
     # Remap action norm stats to "actions" key for downstream transforms
-    if action_key != "actions":
-        if action_key in norm_stats:
-            norm_stats = dict(norm_stats)
+    # and remove unused action keys so they don't cause strict-mode errors at eval
+    all_action_keys = {"actions", "skeleton_actions", "residual_actions"}
+    unused_action_keys = all_action_keys - {action_key}
+    if action_key != "actions" or unused_action_keys:
+        norm_stats = dict(norm_stats)
+        if action_key != "actions" and action_key in norm_stats:
             norm_stats["actions"] = norm_stats.pop(action_key)
             logging.info(f"Using {action_key} normalization stats (remapped to 'actions')")
+        for k in unused_action_keys:
+            norm_stats.pop(k, None)
+        logging.info(f"Norm stats keys after action type filter: {list(norm_stats.keys())}")
 
     # Create the RLDS dataset
     dataset = warmup_rlds_dataset.WarmupRldsDataset(
@@ -127,7 +133,7 @@ def create_warmup_data_loader(
         shuffle=shuffle,
         action_chunk_size=action_horizon,
         datasets=[
-            warmup_rlds_dataset.WarmupRLDSDataset(name="warmup", version="4.0.0", split="train"),
+            warmup_rlds_dataset.WarmupRLDSDataset(name="warmup", version="5.0.0", split="train"),
         ],
     )
 

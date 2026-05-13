@@ -43,7 +43,7 @@ class ResidualActorConfig:
 
     # Output
     action_horizon: int = 10
-    action_dim: int = 7  # actual robot DOF
+    action_dim: int = 6  # 6-DoF pose only (delta_xyz + delta_euler), gripper uses base policy directly
 
     # Gaussian policy
     log_std_min: float = -20.0
