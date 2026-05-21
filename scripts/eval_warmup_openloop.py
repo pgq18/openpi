@@ -31,7 +31,11 @@ def load_episode(data_dir: str, episode_idx: int, split: str) -> dict:
     tf.config.set_visible_devices([], "GPU")
 
     builder = tfds.builder("warmup", data_dir=data_dir, version="5.0.0")
-    dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=False)
+    dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=False, num_parallel_reads=1)
+    options = tf.data.Options()
+    options.autotune.enabled = False
+    options.deterministic = True
+    dataset = dataset.with_options(options)
 
     episode = None
     for i, ep in enumerate(dataset.as_numpy_iterator()):

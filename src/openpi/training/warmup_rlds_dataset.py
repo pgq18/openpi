@@ -13,8 +13,6 @@ from collections.abc import Sequence
 import dataclasses
 import logging
 
-import tqdm
-
 
 @dataclasses.dataclass
 class WarmupRLDSDataset:
@@ -100,6 +98,15 @@ class WarmupRldsDataset:
                         )
                         traj[key] = tf.gather(padded, action_chunk_indices)
 
+                for key in ("state", "relative_state"):
+                    if key in traj["observation"]:
+                        last_state = traj["observation"][key][-1:]
+                        padded_state = tf.concat(
+                            [traj["observation"][key], tf.repeat(last_state, action_chunk_size, axis=0)],
+                            axis=0,
+                        )
+                        traj["observation"][f"{key}_chunks"] = tf.gather(padded_state, action_chunk_indices)
+
                 return traj
 
             dataset = dataset.traj_map(chunk_actions, num_parallel_calls)
@@ -123,10 +130,7 @@ class WarmupRldsDataset:
             logging.info(f"  {ds.name}:{ds.version} split={ds.split}")
         all_datasets = [prepare_single_dataset(ds) for ds in datasets]
 
-        if len(all_datasets) == 1:
-            final_dataset = all_datasets[0]
-        else:
-            final_dataset = dl.DLataset.interleave(all_datasets)
+        final_dataset = all_datasets[0] if len(all_datasets) == 1 else dl.DLataset.interleave(all_datasets)
 
         if shuffle:
             final_dataset = final_dataset.shuffle(shuffle_buffer_size)

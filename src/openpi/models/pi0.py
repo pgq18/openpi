@@ -286,15 +286,17 @@ class Pi0(_model.BaseModel):
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
         feature_layer_idx: int = 12,
+        feature_capture_step: int = 0,
     ) -> tuple[_model.Actions, at.Float[at.Array, "b ah d"]]:
         """Like sample_actions but also returns intermediate features from the action expert.
 
         The features are captured from the specified transformer layer of the action expert
-        during a single forward pass after the denoising loop completes.
+        during one denoising step, without an additional post-denoising forward pass.
 
         Args:
             feature_layer_idx: Which transformer layer to extract features from (0-indexed).
                 Default is 12 (out of 18 layers for gemma_300m).
+            feature_capture_step: Which denoising iteration to capture features from (0-indexed).
 
         Returns:
             Tuple of (denoised_actions, captured_features) where captured_features has shape
@@ -312,9 +314,10 @@ class Pi0(_model.BaseModel):
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
         _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
 
-        # Denoising loop (same as sample_actions)
+        captured_init = jnp.zeros((batch_size, self.action_horizon, self.action_in_proj.out_features), dtype=noise.dtype)
+
         def step(carry):
-            x_t, time = carry
+            x_t, time, step_idx, captured_feature = carry
             suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
                 observation, x_t, jnp.broadcast_to(time, batch_size)
             )
@@ -323,39 +326,25 @@ class Pi0(_model.BaseModel):
             full_attn_mask = jnp.concatenate([prefix_attn_mask_step, suffix_attn_mask], axis=-1)
             positions_step = jnp.sum(prefix_mask, axis=-1)[:, None] + jnp.cumsum(suffix_mask, axis=-1) - 1
 
-            (prefix_out, suffix_out), _ = self.PaliGemma.llm(
+            (prefix_out, suffix_out), _, step_feature = self.PaliGemma.llm(
                 [None, suffix_tokens],
                 mask=full_attn_mask,
                 positions=positions_step,
                 kv_cache=kv_cache,
                 adarms_cond=[None, adarms_cond],
+                method="forward_with_features",
+                feature_layer_idx=feature_layer_idx,
             )
             assert prefix_out is None
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
-            return x_t + dt * v_t, time + dt
+            should_capture = step_idx == feature_capture_step
+            captured_feature = jnp.where(should_capture, step_feature, captured_feature)
+            return x_t + dt * v_t, time + dt, step_idx + 1, captured_feature
 
         def cond(carry):
-            x_t, time = carry
+            x_t, time, step_idx, captured_feature = carry
+            del x_t, step_idx, captured_feature
             return time >= -dt / 2
 
-        x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
-
-        # Extra forward pass at t=0 to extract intermediate features
-        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
-            observation, x_0, jnp.zeros(batch_size)
-        )
-        suffix_attn_mask = make_attn_mask(suffix_mask, suffix_ar_mask)
-        prefix_attn_mask_feat = einops.repeat(prefix_mask, "b p -> b s p", s=suffix_tokens.shape[1])
-        full_attn_mask = jnp.concatenate([prefix_attn_mask_feat, suffix_attn_mask], axis=-1)
-        positions_feat = jnp.sum(prefix_mask, axis=-1)[:, None] + jnp.cumsum(suffix_mask, axis=-1) - 1
-
-        (_, _), _, captured_feature = self.PaliGemma.llm(
-            [None, suffix_tokens],
-            mask=full_attn_mask,
-            positions=positions_feat,
-            kv_cache=kv_cache,
-            adarms_cond=[None, adarms_cond],
-            method="forward_with_features",
-            feature_layer_idx=feature_layer_idx,
-        )
+        x_0, _, _, captured_feature = jax.lax.while_loop(cond, step, (noise, 1.0, jnp.int32(0), captured_init))
         return x_0, captured_feature

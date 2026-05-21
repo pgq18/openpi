@@ -40,7 +40,7 @@ class WarmupInputs(transforms.DataTransformFn):
         state = np.asarray(data["observation/state"], dtype=np.float32)
 
         # Check if wrist camera data is available
-        wrist_image_raw = data.get("observation/wrist_image", None)
+        wrist_image_raw = data.get("observation/wrist_image")
         if wrist_image_raw is not None:
             left_wrist = _parse_image(wrist_image_raw)
             left_wrist_mask = np.True_
@@ -67,6 +67,10 @@ class WarmupInputs(transforms.DataTransformFn):
 
         if "actions" in data:
             inputs["actions"] = data["actions"]
+        if "raw_actions" in data:
+            inputs["raw_actions"] = data["raw_actions"]
+        if "proprio_chunks" in data:
+            inputs["proprio_chunks"] = np.asarray(data["proprio_chunks"], dtype=np.float32)
         if "skeleton_actions" in data:
             inputs["skeleton_actions"] = data["skeleton_actions"]
         if "residual_actions" in data:
